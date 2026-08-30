@@ -1,0 +1,36 @@
+[package]
+name = "headerscan"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.74"
+description = "Audit HTTP response security headers and grade them, with findings that explain the actual risk rather than just listing absent headers."
+authors = ["Prabesh Sharma"]
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/hellpuffyt/headerscan"
+homepage = "https://github.com/hellpuffyt/headerscan"
+keywords = ["security", "http", "headers", "csp", "scanner"]
+categories = ["command-line-utilities", "web-programming"]
+exclude = ["/.github"]
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "2", default-features = false, features = ["tls", "gzip"] }
+
+[dev-dependencies]
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+
+[profile.release]
+lto = true
+strip = true
