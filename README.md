@@ -4,7 +4,7 @@ Audit HTTP response security headers, grade them, and explain the actual risk â€
 not just which headers are absent.
 
 [![CI](https://github.com/hellpuffyt/headerscan/actions/workflows/ci.yml/badge.svg)](https://github.com/hellpuffyt/headerscan/actions/workflows/ci.yml)
-[![Rust](https://img.shields.io/badge/rust-1.74%2B-orange)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/rust-1.88%2B-orange)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ## What is it?
@@ -92,7 +92,8 @@ cargo build --release
 ./target/release/headerscan example.com
 ```
 
-Requires Rust 1.74 or newer.
+Requires Rust 1.88 or newer â€” set by the `icu_*` crates that `ureq` pulls in
+through `url` and `idna`, not by this crate's own code.
 
 ## Usage
 

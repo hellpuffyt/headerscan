@@ -30,6 +30,12 @@ First release.
 - Library API (`headerscan::analyze::analyze`) taking a header set rather than
   a URL, so the rule set is usable and testable without a network.
 
+### Notes
+
+- Minimum supported Rust version is 1.88. That floor comes from the `icu_*`
+  crates reached through `ureq` → `url` → `idna`, not from this crate's own
+  code, and is enforced by a dedicated CI job.
+
 ### Security
 
 - `unsafe_code = "forbid"` at the crate level.

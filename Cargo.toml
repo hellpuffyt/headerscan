@@ -2,7 +2,7 @@
 name = "headerscan"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.74"
+rust-version = "1.88"  # raised by ureq -> url -> idna -> icu_*, which require 1.88
 description = "Audit HTTP response security headers and grade them, with findings that explain the actual risk rather than just listing absent headers."
 authors = ["Prabesh Sharma"]
 license = "MIT"
