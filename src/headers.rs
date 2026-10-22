@@ -260,7 +260,7 @@ mod tests {
         let headers = Headers::new();
         assert!(headers.is_empty());
         assert_eq!(headers.get("x-nope"), None);
-        assert!(headers.get_all("x-nope").is_empty());
+        assert_eq!(headers.get_all("x-nope"), &[] as &[String]);
     }
 
     #[test]
