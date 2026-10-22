@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, Default)]
 pub struct Headers {
     fields: BTreeMap<String, Vec<String>>,
+    unreadable: BTreeMap<String, usize>,
 }
 
 impl Headers {
@@ -25,6 +26,21 @@ impl Headers {
             .entry(name.trim().to_ascii_lowercase())
             .or_default()
             .push(value.trim().to_owned());
+    }
+
+    /// Record that `count` values of `name` arrived but could not be read
+    /// as text (non-ASCII bytes), so they cannot be audited.
+    pub fn note_unreadable(&mut self, name: &str, count: usize) {
+        *self
+            .unreadable
+            .entry(name.trim().to_ascii_lowercase())
+            .or_default() += count;
+    }
+
+    /// Header names with values that could not be read, and how many.
+    #[must_use]
+    pub fn unreadable(&self) -> &BTreeMap<String, usize> {
+        &self.unreadable
     }
 
     /// The first value for a header, if present.
@@ -244,7 +260,7 @@ mod tests {
         let headers = Headers::new();
         assert!(headers.is_empty());
         assert_eq!(headers.get("x-nope"), None);
-        assert!(headers.get_all("x-nope").is_empty());
+        assert_eq!(headers.get_all("x-nope"), &[] as &[String]);
     }
 
     #[test]

@@ -227,9 +227,13 @@ fn check_csp(headers: &Headers, findings: &mut Vec<Finding>) {
 
     let unsafe_inline = csp.directives_containing("'unsafe-inline'");
     if !unsafe_inline.is_empty() {
-        // Only script-src matters much; 'unsafe-inline' in style-src is a far
-        // smaller problem and reporting both at High would be noise.
-        let severity = if unsafe_inline.iter().any(|d| d.starts_with("script")) {
+        // Only scripts matter much; 'unsafe-inline' in style-src is a far
+        // smaller problem and reporting both at High would be noise. Whether
+        // inline *scripts* are allowed is decided by the effective script
+        // directives, so 'unsafe-inline' in default-src counts when no
+        // script-src is set, and is ignored where a nonce, hash or
+        // 'strict-dynamic' is present (CSP Level 2/3).
+        let severity = if inline_scripts_allowed(&csp) {
             Severity::High
         } else {
             Severity::Low
@@ -281,6 +285,27 @@ fn check_csp(headers: &Headers, findings: &mut Vec<Finding>) {
 /// This deliberately lives outside [`check_csp`], which returns early when no
 /// policy is present at all. Keeping it there meant the worst case — no CSP and
 /// no `X-Frame-Options` — was the one case that produced no finding.
+/// Whether the policy lets inline scripts run.
+fn inline_scripts_allowed(csp: &Csp) -> bool {
+    ["script-src", "script-src-elem", "script-src-attr"]
+        .iter()
+        .filter_map(|name| {
+            // script-src-elem/-attr fall back to script-src, then default-src.
+            csp.directive(name).or_else(|| csp.effective("script-src"))
+        })
+        .any(|sources| {
+            let has_unsafe_inline = sources.iter().any(|s| s == "'unsafe-inline'");
+            let neutralised = sources.iter().any(|s| {
+                s == "'strict-dynamic'"
+                    || s.starts_with("'nonce-")
+                    || s.starts_with("'sha256-")
+                    || s.starts_with("'sha384-")
+                    || s.starts_with("'sha512-")
+            });
+            has_unsafe_inline && !neutralised
+        })
+}
+
 fn check_clickjacking(headers: &Headers, findings: &mut Vec<Finding>) {
     let framed_by_csp = headers
         .get("content-security-policy")
@@ -442,6 +467,19 @@ fn check_cookies(headers: &Headers, is_https: bool, findings: &mut Vec<Finding>)
     }
 }
 
+/// Report header values the client could not read as text.
+fn check_unreadable(headers: &Headers, findings: &mut Vec<Finding>) {
+    for (name, count) in headers.unreadable() {
+        findings.push(Finding::new(
+            "header-unreadable",
+            Severity::Info,
+            Some(name),
+            format!("{count} value(s) contain bytes outside visible ASCII and were not audited"),
+            "Inspect these values manually; non-ASCII header values are also poorly interoperable",
+        ));
+    }
+}
+
 /// Audit a response.
 ///
 /// `is_https` changes several verdicts rather than only the wording: HSTS is
@@ -457,6 +495,7 @@ pub fn analyze(url: &str, status: u16, headers: &Headers, is_https: bool) -> Rep
     check_simple_headers(headers, &mut findings);
     check_cors(headers, &mut findings);
     check_cookies(headers, is_https, &mut findings);
+    check_unreadable(headers, &mut findings);
 
     // Most severe first, then by code so output is stable run to run.
     findings.sort_by(|a, b| {
@@ -660,6 +699,60 @@ mod tests {
             let headers = Headers::from_pairs([(
                 "content-security-policy",
                 "default-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'none'",
+            )]);
+            let report = analyze("https://x.test", 200, &headers, true);
+            let finding = report
+                .findings
+                .iter()
+                .find(|f| f.code == "csp-unsafe-inline")
+                .expect("finding");
+            assert_eq!(finding.severity, Severity::Low);
+        }
+
+        #[test]
+        fn unsafe_inline_in_default_src_without_script_src_is_high() {
+            // Regression: only directives *named* script-* were considered,
+            // so this policy - which allows inline scripts through the
+            // default-src fallback - was graded Low.
+            let headers = Headers::from_pairs([(
+                "content-security-policy",
+                "default-src 'self' 'unsafe-inline'; frame-ancestors 'none'",
+            )]);
+            let report = analyze("https://x.test", 200, &headers, true);
+            let finding = report
+                .findings
+                .iter()
+                .find(|f| f.code == "csp-unsafe-inline")
+                .expect("finding");
+            assert_eq!(finding.severity, Severity::High);
+        }
+
+        #[test]
+        fn unsafe_inline_ignored_because_of_a_nonce_or_hash_is_low() {
+            // Browsers ignore 'unsafe-inline' when a nonce or hash is
+            // present (it is kept only as a fallback for old browsers).
+            for policy in [
+                "default-src 'self'; script-src 'nonce-abc123' 'unsafe-inline'",
+                "default-src 'self'; script-src 'sha256-AAAA' 'unsafe-inline'",
+                "default-src 'self'; script-src 'strict-dynamic' 'nonce-x' 'unsafe-inline' https:",
+            ] {
+                let headers = Headers::from_pairs([("content-security-policy", policy)]);
+                let report = analyze("https://x.test", 200, &headers, true);
+                let finding = report
+                    .findings
+                    .iter()
+                    .find(|f| f.code == "csp-unsafe-inline")
+                    .expect("finding");
+                assert_eq!(finding.severity, Severity::Low, "{policy}");
+            }
+        }
+
+        #[test]
+        fn script_src_without_unsafe_inline_overrides_default_src() {
+            // script-src replaces default-src for scripts entirely.
+            let headers = Headers::from_pairs([(
+                "content-security-policy",
+                "default-src 'self' 'unsafe-inline'; script-src 'self'",
             )]);
             let report = analyze("https://x.test", 200, &headers, true);
             let finding = report

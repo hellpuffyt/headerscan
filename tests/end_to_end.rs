@@ -141,3 +141,49 @@ fn an_unreachable_host_is_an_error_not_a_panic() {
     let result = fetch("http://127.0.0.1:1/", Duration::from_secs(2), true);
     assert!(result.is_err());
 }
+
+#[test]
+fn each_repeated_cookie_is_audited_exactly_once() {
+    // Regression: every value of a repeated header was inserted once per
+    // header line, so three cookies produced nine findings of each kind.
+    let port = serve_once(
+        "200 OK",
+        &["Set-Cookie: a=1", "Set-Cookie: b=2", "Set-Cookie: c=3"],
+    );
+    let report = scan(port);
+    for name in ["a", "b", "c"] {
+        let httponly = format!("cookie {name} is readable from JavaScript (no HttpOnly)");
+        let count = report
+            .findings
+            .iter()
+            .filter(|f| f.message == httponly)
+            .count();
+        assert_eq!(count, 1, "{name}: {:?}", codes(&report));
+    }
+    // 3 x (medium no-HttpOnly + low no-SameSite) on top of a bare response.
+    let cookie_findings = report
+        .findings
+        .iter()
+        .filter(|f| f.code.starts_with("cookie-"))
+        .count();
+    assert_eq!(cookie_findings, 6);
+}
+
+#[test]
+fn a_header_value_with_non_ascii_bytes_is_reported_not_silently_skipped() {
+    let port = serve_once(
+        "200 OK",
+        &[
+            "Set-Cookie: name=Jos\u{e9}",
+            "Set-Cookie: ok=1; HttpOnly; SameSite=Lax",
+        ],
+    );
+    let report = scan(port);
+    let unreadable = report
+        .findings
+        .iter()
+        .find(|f| f.code == "header-unreadable")
+        .expect("unreadable value reported");
+    assert_eq!(unreadable.header.as_deref(), Some("set-cookie"));
+    assert!(unreadable.message.starts_with("1 value(s)"));
+}
