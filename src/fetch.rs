@@ -84,12 +84,29 @@ pub fn fetch(url: &str, timeout: Duration, follow_redirects: bool) -> Result<Res
 
     let final_url = response.get_url().to_owned();
     let mut headers = Headers::new();
-    for name in response.headers_names() {
+    // `headers_names()` has one entry per header *line*, so a repeated name
+    // appears several times. Each distinct name is collected once: iterating
+    // the raw list re-inserted every `Set-Cookie` value once per line, so N
+    // cookies produced N² findings and an artificially low score.
+    let names = response.headers_names();
+    let mut seen = std::collections::BTreeSet::new();
+    for name in &names {
+        if !seen.insert(name.as_str()) {
+            continue;
+        }
         // `header()` returns only the first value for a name. `Set-Cookie` is
         // routinely repeated, and using `header()` here silently dropped every
         // cookie after the first — so every one of them went unaudited.
-        for value in response.all(&name) {
-            headers.insert(&name, value);
+        let values = response.all(name);
+        for value in &values {
+            headers.insert(name, value);
+        }
+        // ureq withholds values containing bytes outside visible ASCII (for
+        // example UTF-8 in a cookie value). Record how many, so the report
+        // can say they were not audited instead of passing them silently.
+        let lines = names.iter().filter(|n| *n == name).count();
+        if lines > values.len() {
+            headers.note_unreadable(name, lines - values.len());
         }
     }
 

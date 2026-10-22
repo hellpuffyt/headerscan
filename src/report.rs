@@ -25,6 +25,26 @@ const fn grade_colour(grade: char) -> &'static str {
     }
 }
 
+/// Make server-controlled text safe to print to a terminal.
+///
+/// Cookie names, CSP directive names and the final URL come from the
+/// scanned server. Control characters (including ESC, which starts terminal
+/// escape sequences) and Unicode bidirectional overrides, which can make a
+/// line display differently from what it contains, are shown escaped.
+#[must_use]
+pub fn sanitize_for_terminal(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        let bidi = matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{200E}' | '\u{200F}');
+        if c.is_control() || bidi {
+            let _ = write!(out, "\\u{{{:04x}}}", u32::from(c));
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// Render a report as human-readable text.
 #[must_use]
 pub fn render_text(report: &Report, colour: bool) -> String {
@@ -37,10 +57,15 @@ pub fn render_text(report: &Report, colour: bool) -> String {
     };
 
     let mut out = String::new();
-    let heading = format!("{}  {} {}", report.url, report.status, {
-        let grade = format!("grade {} ({}/100)", report.grade, report.score);
-        paint(&grade, grade_colour(report.grade))
-    });
+    let heading = format!(
+        "{}  {} {}",
+        sanitize_for_terminal(&report.url),
+        report.status,
+        {
+            let grade = format!("grade {} ({}/100)", report.grade, report.score);
+            paint(&grade, grade_colour(report.grade))
+        }
+    );
     out.push_str(&paint(&heading, BOLD));
     out.push('\n');
 
@@ -51,14 +76,18 @@ pub fn render_text(report: &Report, colour: bool) -> String {
 
     for finding in &report.findings {
         let label = paint(finding.severity.label(), severity_colour(finding.severity));
-        let header = finding.header.as_deref().unwrap_or("-");
+        let header = sanitize_for_terminal(finding.header.as_deref().unwrap_or("-"));
         let code = paint(&format!("[{}]", finding.code), DIM);
-        let _ = writeln!(out, "  {label:<8} {header}: {} {code}", finding.message);
+        let _ = writeln!(
+            out,
+            "  {label:<8} {header}: {} {code}",
+            sanitize_for_terminal(&finding.message)
+        );
         let _ = writeln!(
             out,
             "           {} {}",
             paint("fix:", DIM),
-            finding.remediation
+            sanitize_for_terminal(&finding.remediation)
         );
     }
     out
@@ -110,6 +139,18 @@ mod tests {
             ("cross-origin-opener-policy", "same-origin"),
         ]);
         analyze("https://x.test", 200, &headers, true)
+    }
+
+    #[test]
+    fn server_controlled_text_cannot_inject_terminal_escapes() {
+        // A cookie name is taken verbatim from the server's Set-Cookie.
+        let headers = Headers::from_pairs([("set-cookie", "a\u{1b}[2Jb\u{202e}c=1")]);
+        let report = analyze("http://x.test/\u{1b}]0;t\u{7}", 200, &headers, false);
+        let text = render_text(&report, false);
+        assert!(!text.contains('\u{1b}'), "{text:?}");
+        assert!(!text.contains('\u{202e}'), "{text:?}");
+        assert!(!text.contains('\u{7}'), "{text:?}");
+        assert!(text.contains("a\\u{001b}[2Jb\\u{202e}c"), "{text:?}");
     }
 
     #[test]
