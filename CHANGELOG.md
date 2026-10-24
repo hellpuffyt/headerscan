@@ -5,6 +5,39 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Security
+
+- Updated `rustls` 0.23.43 → 0.23.46, `rustls-webpki` 0.103.15 → 0.103.16
+  and `webpki-roots` 1.0.9 → 1.0.10 (RUSTSEC-2026-0285, -0346, -0348,
+  -0349, -0381, -0382).
+- Server-controlled text (cookie names, CSP directive names, the final URL)
+  is escaped before printing, so control characters and bidi overrides
+  cannot alter the terminal or disguise output.
+
+### Fixed
+
+- A header repeated N times had every value collected N times, so N
+  cookies produced N² findings and a deflated score (3 cookies scored 0).
+- `'unsafe-inline'` was graded by directive *name*: in `default-src`
+  without a `script-src` it was Low although inline scripts run; with a
+  nonce, hash or `'strict-dynamic'` (which make browsers ignore it) it was
+  High. Severity now follows the effective script policy.
+- Header values with non-ASCII bytes were dropped silently by the HTTP
+  client; they are now reported as `header-unreadable` (info).
+
+### Changed
+
+- README: install with `cargo install --git` (the crate is not on
+  crates.io); example output replaced with a real run against a local
+  server; findings table lists the two informational codes.
+
+### Added
+
+- `tests/cli_end_to_end.rs` (binary against local servers only);
+  `SECURITY.md`, `.editorconfig`, `docs/PRODUCTION_READINESS.md`.
+
 ## [0.1.0] - 2026-08-30
 
 First release.
