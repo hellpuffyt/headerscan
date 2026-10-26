@@ -1,16 +1,23 @@
 # headerscan
 
-Audit HTTP response security headers, grade them, and explain the actual risk —
-not just which headers are absent.
+Audit HTTP response security headers, grade them, and explain what each
+weakness lets an attacker do, not only which headers are absent.
 
 [![CI](https://github.com/hellpuffyt/headerscan/actions/workflows/ci.yml/badge.svg)](https://github.com/hellpuffyt/headerscan/actions/workflows/ci.yml)
 [![Rust](https://img.shields.io/badge/rust-1.88%2B-orange)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
+<img src="docs/screenshots/scan-local-test-server.png" width="100%" alt="Terminal capture of headerscan --no-colour scanning a local test server over plain HTTP: grade D (62/100) with seven findings, each with a severity, a code and a fix.">
+
+*Terminal capture of a real run against the local test server described below. The text in the image is the exact output.*
+
+**Status:** version 0.1.0, not published on crates.io. CI builds and tests it on
+Linux, macOS and Windows and checks the minimum Rust version (1.88).
+
 ## What is it?
 
 A single static binary that fetches a URL and reports what its security headers
-actually protect against.
+protect against, and where they fail to.
 
 Real output against a local test server that sends `Server: nginx/1.18.0`,
 HSTS, a CSP with `'unsafe-inline'` in `default-src`, `nosniff` and a session
@@ -39,14 +46,14 @@ http://127.0.0.1:18940/  200 grade D (62/100)
 
 Most header scanners produce a checklist: header present, header absent, done.
 That misses the cases where a header is present and still useless, which is
-where real deployments actually go wrong.
+where real deployments usually go wrong.
 
 headerscan understands context:
 
 - **HSTS on a plain HTTP response is reported as ineffective**, because browsers
   ignore it there. A checklist scanner ticks it off as present.
-- **`max-age=0` is flagged as high severity**, not as "HSTS present" — it tells
-  browsers to *forget* the policy.
+- **`max-age=0` is flagged as high severity**, not as "HSTS present", because it
+  tells browsers to *forget* the policy.
 - **`'unsafe-inline'` in `script-src` is high; in `style-src` it is low.**
   Grading them identically buries the finding that matters.
 - **A report-only CSP is distinguished from no CSP**, because it is a real
@@ -57,8 +64,8 @@ headerscan understands context:
   server does not produce noise you learn to ignore.
 
 Every finding carries a stable code, a description of the actual risk, and the
-remediation — because "add this header" without "here is what it stops" is how
-security advice gets ignored.
+remediation. "Add this header" without "here is what it stops" is how security
+advice gets ignored.
 
 ## Features
 
@@ -68,7 +75,7 @@ security advice gets ignored.
 - **Scheme-aware**: several verdicts change between HTTP and HTTPS rather than
   only their wording.
 - **A real CSP parser**, with `default-src` fallback as the specification
-  defines it — including for `'unsafe-inline'`, which is ignored for scripts
+  defines it. That includes `'unsafe-inline'`, which browsers ignore for scripts
   when a nonce, hash or `'strict-dynamic'` is present.
 - **All cookies audited**, not just the first `Set-Cookie`.
 - **Grade out of 100** with severity-weighted deductions.
@@ -76,6 +83,10 @@ security advice gets ignored.
 - **No `unsafe` code** (`unsafe_code = "forbid"`), clippy pedantic clean.
 
 ## Architecture
+
+<img src="docs/assets/overview.svg" width="100%" alt="Diagram of the headerscan pipeline: main.rs parses the CLI, fetch.rs does the only network I/O, then headers.rs, analyze.rs and report.rs turn the headers into findings, a 0 to 100 score and grade, text or JSON output, and an exit code.">
+
+*Diagram of the module pipeline (not a screenshot).*
 
 ```
 main.rs      CLI, exit codes
@@ -92,7 +103,7 @@ handful that live scanning permits.
 
 ## Installation
 
-headerscan is not published on crates.io; install it from the repository:
+headerscan is not published on crates.io. Install it from the repository:
 
 ```bash
 cargo install --git https://github.com/hellpuffyt/headerscan
@@ -107,8 +118,11 @@ cargo build --release
 ./target/release/headerscan example.com
 ```
 
-Requires Rust 1.88 or newer — set by the `icu_*` crates that `ureq` pulls in
-through `url` and `idna`, not by this crate's own code.
+Requires Rust 1.88 or newer. The floor comes from the `icu_*` crates that `ureq`
+pulls in through `url` and `idna`, not from this crate's own code.
+
+The result is a single binary with no runtime dependencies. Release builds
+enable LTO and strip symbols.
 
 ## Usage
 
@@ -127,13 +141,16 @@ headerscan --timeout 30 slow.example.com
 | `-t`, `--timeout <secs>` | Request timeout (default `10`) |
 | `--min-score <n>` | Exit non-zero if any target scores below `n` |
 | `--no-redirects` | Do not follow redirects |
-| `--no-colour` | Disable ANSI colour |
+| `--no-colour` | Disable ANSI colour (setting `NO_COLOR` has the same effect) |
 
 Exit codes: `0` all targets met the threshold, `1` a target scored below
-`--min-score` or a request failed, `2` internal error.
+`--min-score` or a request failed, `2` a usage error (bad arguments) or an
+internal error. `--min-score` defaults to `0`, so without it a reachable target
+exits `0` whatever its grade. Pass a threshold when you want a failing exit
+status.
 
-An unreachable host does not abandon the remaining targets — it is reported and
-the scan continues.
+An unreachable host does not abandon the remaining targets. It is reported on
+stderr and the scan continues.
 
 ## Examples
 
@@ -158,6 +175,10 @@ $ headerscan --format json http://127.0.0.1:18940/ | jq '.summary'
 }
 ```
 
+The full document is `{"summary": {...}, "results": [...]}`. Each result has
+`url` (after redirects), `status`, `score`, `grade` and `findings`, and each
+finding has `code`, `severity`, `header`, `message` and `remediation`.
+
 **As a library:**
 
 ```rust
@@ -169,8 +190,11 @@ let headers = Headers::from_pairs([
     ("content-security-policy", "default-src 'self'; frame-ancestors 'none'"),
 ]);
 let report = analyze("https://example.com", 200, &headers, true);
-println!("{} ({}/100)", report.grade, report.score);
+println!("{} ({}/100)", report.grade, report.score); // B (83/100)
 ```
+
+The 17 points lost here are a missing `X-Content-Type-Options` (medium) plus
+missing `Permissions-Policy`, `Referrer-Policy` and COOP (low each).
 
 ## Findings reference
 
@@ -210,14 +234,17 @@ Grades: A ≥ 90, B ≥ 80, C ≥ 70, D ≥ 60, E ≥ 50, F below.
 
 ## Testing
 
+These are the commands CI runs:
+
 ```bash
-cargo test              # unit + integration
-cargo clippy --all-targets
-cargo fmt --check
+cargo test --all-targets                    # 69 tests: 54 unit, 15 integration
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
+cargo doc --no-deps
 ```
 
 The suite has two layers. Unit tests cover every rule as a pure function,
-including the false-positive guards — the `Server: nginx` case, `unsafe-inline`
+including the false-positive guards: the `Server: nginx` case, `unsafe-inline`
 severity by directive, `Secure` not required over HTTP. Integration tests run a
 real local HTTP server, which is what catches the things rules cannot see:
 mixed-case header names surviving the wire, repeated `Set-Cookie` lines all
@@ -231,25 +258,15 @@ test contacts the internet. HTTPS responses are covered by the unit tests
 (the scheme flag); there is no local TLS server test, because the client
 trusts only the public web PKI roots.
 
-The hand-rolled test server is deliberate — it lets a test emit duplicated or
+The hand-rolled test server is deliberate. It lets a test emit duplicated or
 malformed headers that a real framework would refuse to send.
-
-## Deployment
-
-Static binary, no runtime dependencies:
-
-```bash
-cargo build --release   # ./target/release/headerscan
-```
-
-Release builds enable LTO and strip symbols.
 
 ## Security
 
 - **`unsafe_code = "forbid"`** at the crate level.
 - **Read-only.** It issues one GET per target and never sends credentials,
   follows at most five redirects, and writes nothing anywhere.
-- **No response body is retained** — only headers are read, so scanning a page
+- **No response body is read.** Only headers are kept, so scanning a page
   cannot spill its content into your logs.
 - **TLS via rustls**, not OpenSSL.
 - **Terminal-safe output**: server-controlled text (cookie names, CSP
@@ -259,7 +276,15 @@ Release builds enable LTO and strip symbols.
 - Scan only hosts you are authorised to test. It is a passive audit of one
   response, but that is still a request to someone else's server.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the checks to run and how to add a
+rule. New findings need a stable code, a risk-focused message, a remediation and
+a false-positive test.
+
 ## Roadmap
+
+Not implemented yet:
 
 - Concurrent scanning for large target lists.
 - `Cache-Control` checks for responses that look authenticated.
@@ -267,4 +292,4 @@ Release builds enable LTO and strip symbols.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
